@@ -1,0 +1,70 @@
+version: "3.8"
+
+# ============================================
+# SmartNest - Smart Home Security Lab
+# ELEC0138 Security & Privacy Coursework
+# ============================================
+# Usage:
+#   docker-compose up --build        (start all)
+#   docker-compose up --build -d     (start in background)
+#   docker-compose logs -f           (watch logs)
+#   docker-compose down              (stop all)
+# ============================================
+
+services:
+
+  # ── MQTT Broker (Mosquitto) ──────────────
+  # Intentionally insecure: no TLS, no auth
+  # Port 1883 exposed for Wireshark sniffing
+  broker:
+    image: eclipse-mosquitto:2
+    container_name: smartnest-broker
+    ports:
+      - "1883:1883"     # MQTT - plaintext (for attack demo)
+      - "9001:9001"     # Websocket (optional)
+    volumes:
+      - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - broker-data:/mosquitto/data
+      - broker-log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - smartnest
+
+  # ── IoT Device Simulator ─────────────────
+  # Simulates: lock_01, light_01, alarm_01
+  devices:
+    build: ./devices
+    container_name: smartnest-devices
+    environment:
+      - MQTT_BROKER=broker
+      - MQTT_PORT=1883
+    depends_on:
+      - broker
+    restart: unless-stopped
+    networks:
+      - smartnest
+
+  # ── Web Management Panel (Flask) ─────────
+  # Intentionally vulnerable: SQLi, no CSRF, default creds
+  # Access at http://localhost:5000
+  web:
+    build: ./web
+    container_name: smartnest-web
+    ports:
+      - "5001:5000"     # Web UI
+    environment:
+      - MQTT_BROKER=broker
+      - MQTT_PORT=1883
+    depends_on:
+      - broker
+    restart: unless-stopped
+    networks:
+      - smartnest
+
+volumes:
+  broker-data:
+  broker-log:
+
+networks:
+  smartnest:
+    driver: bridge
