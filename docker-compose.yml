@@ -51,10 +51,11 @@ services:
     build: ./web
     container_name: smartnest-web
     ports:
-      - "5001:5000"     # Web UI
+      - "5001:5000"
     environment:
       - MQTT_BROKER=broker
       - MQTT_PORT=1883
+      - EXTERNAL_PORT=5001     # ← 加这行，和上面 ports 左边保持一致
     depends_on:
       - broker
     restart: unless-stopped

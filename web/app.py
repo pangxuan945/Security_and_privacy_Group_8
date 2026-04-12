@@ -482,10 +482,21 @@ if __name__ == "__main__":
     thread = threading.Thread(target=mqtt_connect, daemon=True)
     thread.start()
 
-    print("=" * 50)
+    external_port = os.getenv("EXTERNAL_PORT", "5000")
+
+    print("=" * 60)
     print("SmartNest Web Panel")
     print(f"Broker: {BROKER_HOST}:{BROKER_PORT}")
+    print(f">>> Access the dashboard at: http://localhost:{external_port}")
+    print(">>> Login: admin / admin")
     print("WARNING: This app is intentionally vulnerable!")
-    print("=" * 50)
+    print("=" * 60)
+
+    # Silence Flask's default startup banner to avoid confusion
+    # (it would print the container-internal port 5000, which is misleading)
+    import logging
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)
+    import flask.cli
+    flask.cli.show_server_banner = lambda *args, **kwargs: None
 
     app.run(host="0.0.0.0", port=5000, debug=False)
