@@ -14,26 +14,51 @@ from datetime import datetime
 
 import paho.mqtt.client as mqtt
 
-def load_config(path="config.json"):
+def verify_config_signature(config_path: str, sig_path: str, pubkey_path: str) -> bool:
+    """Verify config file signature before loading. Reject on any failure."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+    from cryptography.exceptions import InvalidSignature
+
     try:
-        with open(path) as f:
-            cfg = json.load(f)
-        print(f"[CONFIG] Loaded from {path}")
-        return cfg
-    except FileNotFoundError:
-        print("[CONFIG] config.json not found, using defaults")
-        return {}
-    except json.JSONDecodeError:
-        print("[CONFIG] config.json is malformed, using defaults")
+        with open(config_path, "rb") as f:
+            data = f.read()
+        with open(sig_path, "rb") as f:
+            signature = f.read()
+        with open(pubkey_path, "rb") as f:
+            public_key = load_pem_public_key(f.read())
+        public_key.verify(signature, data)
+        print(f"[CONFIG] Signature verified — {config_path} is authentic")
+        return True
+    except (FileNotFoundError, InvalidSignature) as e:
+        print(f"[CONFIG] SIGNATURE VERIFICATION FAILED: {e}")
+        print("[CONFIG] Refusing to load untrusted configuration")
+        return False
+
+
+def load_config(path="config.json"):
+    sig_path = path + ".sig"
+    pubkey_path = "/keys/public_key.pem"   # mounted from defense/d4_signing
+
+    if not verify_config_signature(path, sig_path, pubkey_path):
+        print("[CONFIG] Falling back to safe defaults")
         return {}
 
-_cfg = load_config()
-BROKER_HOST     = os.getenv("MQTT_BROKER",  _cfg.get("broker_host", "broker"))
-BROKER_PORT     = int(os.getenv("MQTT_PORT", _cfg.get("broker_port", 8883)))
+    with open(path) as f:
+        return json.load(f)
+
+
+# ──────────────────────────────────────────────
+# Load configuration and initialize broker connection parameters
+# ──────────────────────────────────────────────
+_cfg = load_config("/app/config.json")
+
+BROKER_HOST = os.getenv("MQTT_BROKER",  _cfg.get("broker_host", "broker"))
+BROKER_PORT = int(os.getenv("MQTT_PORT", _cfg.get("broker_port", 8883)))
 REPORT_INTERVAL = int(_cfg.get("report_interval", 10))
-CA_CERT         = os.getenv("CA_CERT",      "/certs/ca.crt")
-CLIENT_CERT     = os.getenv("CLIENT_CERT",  "/certs/device_simulator.crt")
-CLIENT_KEY      = os.getenv("CLIENT_KEY",   "/certs/device_simulator.key")
+
+CA_CERT     = os.getenv("CA_CERT",     "/certs/ca.crt")
+CLIENT_CERT = os.getenv("CLIENT_CERT", "/certs/device_simulator.crt")
+CLIENT_KEY  = os.getenv("CLIENT_KEY",  "/certs/device_simulator.key")
 
 # ──────────────────────────────────────────────
 # Device State

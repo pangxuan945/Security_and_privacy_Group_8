@@ -2,6 +2,7 @@
 # TLS private keys - never commit
 defense/certs/*.key
 defense/certs/*.srl
+defense/d4_signing/config.json.sig
 
 venv/
 defense/d4_signing/private_key.pem

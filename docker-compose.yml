@@ -36,6 +36,9 @@ services:
       - CLIENT_KEY=/certs/device_simulator.key
     volumes:
       - ./defense/certs:/certs:ro
+      - ./defense/d4_signing/public_key.pem:/keys/public_key.pem:ro
+      - ./devices/config.json:/app/config.json:ro
+      - ./devices/config.json.sig:/app/config.json.sig:ro
     depends_on:
       - broker
     restart: unless-stopped
