@@ -1,0 +1,6 @@
+{
+  "broker_host": "broker",
+  "broker_port": 8883,
+  "report_interval": 10,
+  "device_ids": ["lock_01", "light_01", "alarm_01"]
+}

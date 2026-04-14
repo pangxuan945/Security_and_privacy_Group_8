@@ -14,11 +14,26 @@ from datetime import datetime
 
 import paho.mqtt.client as mqtt
 
-BROKER_HOST = os.getenv("MQTT_BROKER", "broker")
-BROKER_PORT = int(os.getenv("MQTT_PORT", 8883))
-CA_CERT     = os.getenv("CA_CERT",     "/certs/ca.crt")
-CLIENT_CERT = os.getenv("CLIENT_CERT", "/certs/device_simulator.crt")
-CLIENT_KEY  = os.getenv("CLIENT_KEY",  "/certs/device_simulator.key")
+def load_config(path="config.json"):
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+        print(f"[CONFIG] Loaded from {path}")
+        return cfg
+    except FileNotFoundError:
+        print("[CONFIG] config.json not found, using defaults")
+        return {}
+    except json.JSONDecodeError:
+        print("[CONFIG] config.json is malformed, using defaults")
+        return {}
+
+_cfg = load_config()
+BROKER_HOST     = os.getenv("MQTT_BROKER",  _cfg.get("broker_host", "broker"))
+BROKER_PORT     = int(os.getenv("MQTT_PORT", _cfg.get("broker_port", 8883)))
+REPORT_INTERVAL = int(_cfg.get("report_interval", 10))
+CA_CERT         = os.getenv("CA_CERT",      "/certs/ca.crt")
+CLIENT_CERT     = os.getenv("CLIENT_CERT",  "/certs/device_simulator.crt")
+CLIENT_KEY      = os.getenv("CLIENT_KEY",   "/certs/device_simulator.key")
 
 # ──────────────────────────────────────────────
 # Device State
@@ -252,7 +267,8 @@ def publish_status_loop(client):
     }
 
     while True:
-        time.sleep(10)
+        # time.sleep(10)
+        time.sleep(REPORT_INTERVAL)
 
         # Simulate battery drain on lock
         lock = devices["lock_01"]

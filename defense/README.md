@@ -133,10 +133,52 @@ The code changes live directly in `web/app.py` on the `cw2-defense` branch.
 
 ## Defense 4 — Signed update packages
 
-**Status:** in progress (team member D).
+## Defense 4 — Signed update packages
 
 **Mitigates:** supply-chain threats (malicious configuration or firmware updates).
 
-**Approach:** A Python script uses the `cryptography` library to generate an Ed25519 key pair, sign a JSON configuration bundle, and verify the signature before the simulator loads it. Tampered bundles are rejected before deployment.
+**Approach:** An Ed25519 key pair is used to sign the device configuration bundle (`config.json`). The simulator refuses to load any configuration whose signature cannot be verified against the public key, preventing an attacker from injecting a malicious broker address or altered parameters.
 
-Implementation files will be added to `d4_signing/` when complete.
+### What changed
+
+1. `devices/config.json` externalises key simulator parameters (`broker_host`, `broker_port`, `report_interval`) that were previously hard-coded.
+2. `devices/simulator.py` reads these parameters from `config.json` at startup instead of using hard-coded values.
+3. `defense/d4_signing/gen_keys.py` generates an Ed25519 private/public key pair.
+4. `defense/d4_signing/sign_update.py` signs a configuration file with the private key, producing a `.sig` file.
+5. `defense/d4_signing/verify_update.py` verifies the signature before the configuration is trusted. Any tampering causes immediate rejection.
+
+### Setup
+
+```bash
+cd defense/d4_signing
+python -m venv venv
+venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+```
+
+### Demo
+
+```bash
+# Step 1 — generate key pair (run once)
+python gen_keys.py
+
+# Step 2 — sign the configuration bundle
+python sign_update.py config.json
+
+# Step 3 — verify: authentic config passes
+python verify_update.py config.json
+# [OK] Signature valid. 'config.json' is authentic.
+# [OK] Safe to load configuration.
+
+# Step 4 — simulate attacker tampering (edit broker_host to evil.attacker.com)
+python verify_update.py config.json
+# [FAIL] Signature INVALID. 'config.json' has been tampered with.
+# [FAIL] Configuration rejected.
+```
+
+### Evidence screenshots
+
+| File | Shows |
+|------|-------|
+| `screenshots/cw2_evidence_d4_01_valid.png` | Terminal output — valid signature accepted |
+| `screenshots/cw2_evidence_d4_02_tampered.png` | Terminal output — tampered config rejected |
