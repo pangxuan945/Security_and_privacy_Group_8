@@ -9,12 +9,16 @@ import time
 import random
 import threading
 import os
+import ssl
 from datetime import datetime
 
 import paho.mqtt.client as mqtt
 
 BROKER_HOST = os.getenv("MQTT_BROKER", "broker")
-BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
+BROKER_PORT = int(os.getenv("MQTT_PORT", 8883))
+CA_CERT     = os.getenv("CA_CERT",     "/certs/ca.crt")
+CLIENT_CERT = os.getenv("CLIENT_CERT", "/certs/device_simulator.crt")
+CLIENT_KEY  = os.getenv("CLIENT_KEY",  "/certs/device_simulator.key")
 
 # ──────────────────────────────────────────────
 # Device State
@@ -304,6 +308,16 @@ def main():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="device_simulator")
     client.on_connect = on_connect
     client.on_message = on_message
+
+    # TLS configuration
+    client.tls_set(
+        ca_certs=CA_CERT,
+        certfile=CLIENT_CERT,
+        keyfile=CLIENT_KEY,
+        cert_reqs=ssl.CERT_REQUIRED,
+        tls_version=ssl.PROTOCOL_TLSv1_2,
+    )
+    client.tls_insecure_set(False)
 
     # Retry connection
     while True:

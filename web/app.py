@@ -20,11 +20,17 @@ from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, session, jsonify
 import paho.mqtt.client as mqtt
 
+import ssl
+
 app = Flask(__name__)
 app.secret_key = "supersecretkey123"  # Intentionally weak
 
 BROKER_HOST = os.getenv("MQTT_BROKER", "broker")
-BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
+BROKER_PORT = int(os.getenv("MQTT_PORT", 8883))
+
+CA_CERT     = os.getenv("CA_CERT",     "/certs/ca.crt")
+CLIENT_CERT = os.getenv("CLIENT_CERT", "/certs/web_panel.crt")
+CLIENT_KEY  = os.getenv("CLIENT_KEY",  "/certs/web_panel.key")
 
 # ──────────────────────────────────────────────
 # In-memory device state (updated via MQTT)
@@ -113,15 +119,24 @@ mqtt_client.on_message = on_message
 
 
 def mqtt_connect():
+    mqtt_client.tls_set(
+        ca_certs=CA_CERT,
+        certfile=CLIENT_CERT,
+        keyfile=CLIENT_KEY,
+        cert_reqs=ssl.CERT_REQUIRED,
+        tls_version=ssl.PROTOCOL_TLSv1_2,
+    )
+    mqtt_client.tls_insecure_set(False)
+
     while True:
         try:
             mqtt_client.connect(BROKER_HOST, BROKER_PORT, 60)
             mqtt_client.loop_start()
+            print("[WEB-MQTT] Connected to broker over TLS")
             return
         except Exception as e:
             print(f"[WEB-MQTT] Waiting for broker... ({e})")
             time.sleep(3)
-
 
 # ──────────────────────────────────────────────
 # HTML Templates (inline for simplicity)

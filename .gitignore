@@ -1,0 +1,4 @@
+
+# TLS private keys - never commit
+defense/certs/*.key
+defense/certs/*.srl

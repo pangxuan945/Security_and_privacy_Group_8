@@ -1,52 +1,47 @@
-version: "3.8"
 
-# ============================================
-# SmartNest - Smart Home Security Lab
-# ELEC0138 Security & Privacy Coursework
-# ============================================
-# Usage:
-#   docker-compose up --build        (start all)
-#   docker-compose up --build -d     (start in background)
-#   docker-compose logs -f           (watch logs)
-#   docker-compose down              (stop all)
-# ============================================
+# ==============================================================================
+# SmartNest CW2 — Docker Compose with TLS defense enabled
+# ==============================================================================
+# Changes vs CW1:
+#   1. Broker port 1883 closed; 8883 (TLS) exposed instead
+#   2. defense/certs/ mounted into every container that needs TLS
+#   3. ACL file mounted into broker
+# ==============================================================================
 
 services:
 
-  # ── MQTT Broker (Mosquitto) ──────────────
-  # Intentionally insecure: no TLS, no auth
-  # Port 1883 exposed for Wireshark sniffing
   broker:
     image: eclipse-mosquitto:2
     container_name: smartnest-broker
     ports:
-      - "1883:1883"     # MQTT - plaintext (for attack demo)
-      - "9001:9001"     # Websocket (optional)
+      - "8883:8883"                             # TLS only
     volumes:
       - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./broker/acl.conf:/mosquitto/config/acl.conf
+      - ./defense/certs:/mosquitto/certs:ro     # read-only for safety
       - broker-data:/mosquitto/data
       - broker-log:/mosquitto/log
     restart: unless-stopped
     networks:
       - smartnest
 
-  # ── IoT Device Simulator ─────────────────
-  # Simulates: lock_01, light_01, alarm_01
   devices:
     build: ./devices
     container_name: smartnest-devices
     environment:
       - MQTT_BROKER=broker
-      - MQTT_PORT=1883
+      - MQTT_PORT=8883
+      - CA_CERT=/certs/ca.crt
+      - CLIENT_CERT=/certs/device_simulator.crt
+      - CLIENT_KEY=/certs/device_simulator.key
+    volumes:
+      - ./defense/certs:/certs:ro
     depends_on:
       - broker
     restart: unless-stopped
     networks:
       - smartnest
 
-  # ── Web Management Panel (Flask) ─────────
-  # Intentionally vulnerable: SQLi, no CSRF, default creds
-  # Access at http://localhost:5000
   web:
     build: ./web
     container_name: smartnest-web
@@ -54,8 +49,13 @@ services:
       - "5001:5000"
     environment:
       - MQTT_BROKER=broker
-      - MQTT_PORT=1883
-      - EXTERNAL_PORT=5001     # ← 加这行，和上面 ports 左边保持一致
+      - MQTT_PORT=8883
+      - EXTERNAL_PORT=5001
+      - CA_CERT=/certs/ca.crt
+      - CLIENT_CERT=/certs/web_panel.crt
+      - CLIENT_KEY=/certs/web_panel.key
+    volumes:
+      - ./defense/certs:/certs:ro
     depends_on:
       - broker
     restart: unless-stopped
