@@ -1,2 +1,6 @@
 flask>=3.0.0
 paho-mqtt>=2.0.0
+bcrypt>=4.1.0
+flask-wtf>=1.2.1
+pyotp>=2.9.0
+qrcode>=7.4.2
