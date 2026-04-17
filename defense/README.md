@@ -16,7 +16,7 @@ docker compose up --build
 | Defense | Module | Mitigates | Primary technique | Status |
 |---------|--------|-----------|-------------------|--------|
 | D1 | MQTT TLS + mutual certs | T1, T2 | Transport encryption, client certificate authentication, per-identity ACL | complete |
-| D2 | AI-driven IDS | residual T2, T4, DoS | Isolation Forest anomaly detection on MQTT traffic | in progress |
+| D2 | AI-driven IDS | residual T2, DoS | Statistical thresholds + Isolation Forest anomaly detection on MQTT traffic | complete |
 | D3 | Web panel hardening | T3, T4, T5 | Parameterized queries, CSRF tokens, bcrypt hashing, TOTP MFA | complete |
 | D4 | Signed configuration updates | Supply-chain | Ed25519 signature verification with graceful fallback | complete |
 
@@ -33,7 +33,10 @@ defense/
 │   ├── device_simulator.crt/.key
 │   ├── web_panel.crt/.key
 │   └── ids_monitor.crt/.key
-├── d2_ids/                            # D2 intrusion detection (team member C)
+├── d2_ids/                            # D2 intrusion detection system
+│   ├── ids.py                         # three-layer anomaly detection engine
+│   ├── Dockerfile
+│   └── requirements.txt              # paho-mqtt, numpy, scikit-learn
 ├── d4_signing/                        # D4 signing tools
 │   ├── gen_keys.py
 │   ├── sign_update.py
@@ -45,6 +48,7 @@ defense/
 │   └── mqtt_tls.pcap
 ├── screenshots/                       # defense effectiveness evidence
 │   ├── cw2_evidence_01–04             # D1 evidence (4 screenshots)
+│   ├── cw2_evidence_d2_01–03          # D2 evidence (3 screenshots)
 │   ├── cw2_evidence_d3_01–06          # D3 evidence (6 screenshots)
 │   └── cw2_evidence_d4_01–02          # D4 evidence (2 screenshots)
 └── recordings/
@@ -60,7 +64,7 @@ defense/
 
 1. Mosquitto broker now listens **only on port 8883** (TLS). Port 1883 is closed.
 2. `require_certificate true` forces every client to present a certificate signed by the SmartNest CA during the TLS handshake. Clients without a valid certificate are rejected before the MQTT layer is reached.
-3. `use_identity_as_username true` maps the certificate's CN field to the MQTT username, which enables per-identity ACLs defined in `broker/acl.conf`. Each identity has the minimum set of topics it needs: devices can only publish to their own status topics, the web panel can publish commands but not device state, and the IDS monitor has read-only access.
+3. `use_identity_as_username true` maps the certificate's CN field to the MQTT username, which enables per-identity ACLs defined in `broker/acl.conf`. Each identity has the minimum set of topics it needs: devices can only publish to their own status topics, the web panel can publish commands but not device state, and the IDS monitor has read-only access plus write to `home/alert`.
 4. `devices/simulator.py` and `web/app.py` load their client certificate at startup via `paho.mqtt.Client.tls_set()` with strict hostname verification.
 
 ### Setup
@@ -78,9 +82,8 @@ A successful startup shows the TLS cipher suite being negotiated:
 ```
 Client device_simulator negotiated TLSv1.2 cipher ECDHE-RSA-AES256-GCM-SHA384
 Client web_panel       negotiated TLSv1.2 cipher ECDHE-RSA-AES256-GCM-SHA384
+Client ids_monitor     negotiated TLSv1.2 cipher ECDHE-RSA-AES256-GCM-SHA384
 ```
-
-`ECDHE` provides forward secrecy, `AES256-GCM` provides authenticated encryption, and `SHA384` is the HMAC for handshake integrity.
 
 ### Verification
 
@@ -110,13 +113,84 @@ Client 172.x.x.x disconnected: Protocol error.
 
 ## Defense 2 — AI-driven intrusion detection system
 
-**Status:** in progress (team member C).
+**Status:** complete. **Mitigates:** residual T2 (compromised device certificate), flood-based DoS.
 
-**Mitigates:** residual T2 (if a device certificate is leaked), T4 (CSRF), flood-based DoS.
+**Threat model:** Even after D1 closes the anonymous-access path, an attacker who compromises a legitimate client certificate (e.g. the web panel's private key) can still publish arbitrary commands through the broker. D2 addresses this residual risk with a separate monitoring container that detects anomalous traffic patterns in real time.
 
-**Approach:** A separate `ids_monitor` container subscribes read-only to `home/#` using its own client certificate (read-only ACL). It collects a baseline of normal message rates and trains an Isolation Forest model; at runtime it flags anomalous traffic patterns (publish rate spikes, unknown client IDs, commands outside normal time windows) and raises alerts on `home/alert`, which the web dashboard renders as a red warning banner.
+### Architecture
 
-Implementation files will be added to `d2_ids/` when complete.
+The IDS runs as a fourth Docker container (`smartnest-ids`) that connects to the broker using its own `ids_monitor` client certificate with a read-only ACL for `home/#` and write access to `home/alert` only. It operates in three phases:
+
+**Phase 1 — Baseline collection (60 seconds).** The IDS records message counts per topic per 10-second sliding window, building a statistical profile of normal traffic: per-topic mean and standard deviation, active topic count, and command frequency.
+
+**Phase 2 — Model training.** After baseline collection, the IDS trains a scikit-learn Isolation Forest on feature vectors extracted from the baseline windows: `[total_message_rate, command_rate, active_topics]`. The model learns the "shape" of normal traffic and can flag deviations that simple thresholds might miss.
+
+**Phase 3 — Real-time detection.** Every 10-second window is evaluated by three detection layers:
+
+| Layer | Method | Detects |
+|-------|--------|---------|
+| Statistical thresholds | Per-topic rate vs baseline mean + 3σ | Brute-force flood attacks |
+| Command frequency | Command topic burst count > threshold | Unauthorized command injection |
+| Isolation Forest | Multi-dimensional anomaly score | Novel attack patterns |
+
+When any layer flags an anomaly, the IDS publishes a structured JSON alert to `home/alert`. The web dashboard subscribes to this topic and renders a **red alert banner** at the top of the page showing the alert type, detail, and timestamp.
+
+### Setup
+
+The IDS container is defined in `docker-compose.yml` and starts automatically:
+
+```bash
+docker compose up --build
+```
+
+After 60 seconds, the IDS logs:
+
+```
+[IDS] Computing baseline from 60s of traffic...
+[IDS]   home/lock/status: mean=1.0, std=0.0 msgs/window
+[IDS]   home/light/status: mean=1.2, std=0.4 msgs/window
+[IDS]   home/alarm/status: mean=1.2, std=0.4 msgs/window
+[IDS]   home/heartbeat: mean=3.0, std=0.0 msgs/window
+[IDS]   Isolation Forest trained on 6 windows, 3 features
+[IDS] Baseline ready. Switching to detection mode.
+```
+
+### Verification
+
+After the IDS enters detection mode, simulate a compromised web panel certificate launching a command flood:
+
+```bash
+docker run --rm --network security_and_privacy_group_8_smartnest \
+  -v $(pwd)/defense/certs:/certs:ro \
+  eclipse-mosquitto:2 sh -c '
+  for i in $(seq 1 30); do
+    mosquitto_pub -h broker -p 8883 \
+      --cafile /certs/ca.crt \
+      --cert /certs/web_panel.crt \
+      --key /certs/web_panel.key \
+      -t "home/lock/command" \
+      -m "{\"action\":\"UNLOCK\",\"issued_by\":\"attacker_$i\"}"
+  done'
+```
+
+Within 10 seconds, the IDS fires alerts:
+
+```
+[ALERT] 00:18:54 !!  [RATE_SPIKE] Topic 'home/lock/command' received 26 msgs in 10s (baseline: 0)
+[ALERT] 00:18:54 !!! [COMMAND_FLOOD] Burst of 26 commands on 'home/lock/command' in 10s
+```
+
+Refreshing the Dashboard shows a red "IDS Alert — Anomaly Detected" banner with the alert details.
+
+**Note:** The attack uses the `web_panel` certificate (not `device_simulator`) because D1's ACL restricts `device_simulator` to read-only on command topics. This demonstrates that D2 provides defense-in-depth even when D1's ACL is bypassed via a compromised credential.
+
+### Evidence
+
+| File | Shows |
+|------|-------|
+| `cw2_evidence_d2_01_baseline_trained.png` | Baseline statistics and Isolation Forest training complete |
+| `cw2_evidence_d2_02_attack_detected.png` | IDS logs: RATE_SPIKE + COMMAND_FLOOD alerts triggered |
+| `cw2_evidence_d2_03_dashboard_alert_banner.png` | Dashboard red banner showing alert details and device compromise |
 
 ---
 
@@ -138,14 +212,12 @@ Implementation files will be added to `d2_ids/` when complete.
 
 ### Setup
 
-After merging D3 code, rebuild the web container:
-
 ```bash
 docker compose down
 docker compose up --build
 ```
 
-On first login (`admin` / `admin`), the panel redirects to `/verify-totp` and displays a QR code. Scan it with an authenticator app, enter the 6-digit code, and enrollment is complete. All subsequent logins require the TOTP code.
+On first login (`admin` / `admin`), the panel redirects to `/verify-totp` and displays a QR code. Scan it with an authenticator app, enter the 6-digit code, and enrollment is complete.
 
 To reset TOTP enrollment for a clean demo:
 
@@ -167,9 +239,9 @@ chmod +x defense/verify_web_hardening.sh
 
 **Manual checks:**
 
-1. **SQLi blocked** — enter `admin' --` as username with any password → "Invalid credentials"
-2. **sqlmap fails** — run sqlmap against `/login` → reports parameters are not injectable
-3. **CSRF blocked** — open `attacks/csrf_poc.html` in browser → "Request Blocked" (HTTP 400)
+1. **SQLi blocked** — enter `admin' --` as username → "Invalid credentials"
+2. **sqlmap fails** — sqlmap reports parameters not injectable
+3. **CSRF blocked** — open `attacks/csrf_poc.html` → "Request Blocked" (HTTP 400)
 4. **TOTP required** — log in with `admin` / `admin` → redirected to 6-digit code prompt
 5. **Dashboard functional** — after completing TOTP, dashboard works normally
 
@@ -213,7 +285,7 @@ python sign_update.py ../../devices/config.json
 
 Both `private_key.pem` and `*.sig` files are gitignored and must be regenerated locally after cloning. `public_key.pem` is committed because the simulator needs it to verify signatures.
 
-**Important:** If you modify `devices/config.json`, you must regenerate `devices/config.json.sig` by running `python sign_update.py ../../devices/config.json` and commit both files together. Otherwise the signature check will fail on next startup.
+**Important:** If you modify `devices/config.json`, you must regenerate `devices/config.json.sig` by running `python sign_update.py ../../devices/config.json` and commit both files together.
 
 ### Verification
 

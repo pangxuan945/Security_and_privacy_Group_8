@@ -45,6 +45,8 @@ CLIENT_KEY  = os.getenv("CLIENT_KEY",  "/certs/web_panel.key")
 
 device_states = {}
 event_log = []
+alert_log = []
+MAX_ALERTS = 20
 MAX_EVENTS = 100
 
 # ──────────────────────────────────────────────
@@ -193,6 +195,15 @@ def on_message(client, userdata, msg):
                 "data": payload,
                 "last_seen": datetime.now().strftime("%H:%M:%S"),
             }
+
+        # Capture IDS alerts
+        if topic == "home/alert":
+            alert_log.insert(0, {
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "data": payload,
+            })
+            if len(alert_log) > MAX_ALERTS:
+                 alert_log.pop()
 
         # Log events
         if "/event" in topic:
@@ -419,6 +430,24 @@ DASHBOARD_PAGE = """
     </div>
 
     <div class="container">
+        {% if alerts %}
+        <div style="background: #991b1b; border: 1px solid #f87171; border-radius: 8px;
+                    padding: 1rem 1.5rem; margin-bottom: 1.5rem;">
+            <h3 style="color: #fca5a5; margin-bottom: 0.5rem; font-size: 1rem;">
+                IDS Alert — Anomaly Detected
+            </h3>
+            {% for alert in alerts %}
+            <div style="color: #fecaca; font-size: 0.85rem; padding: 0.3rem 0;
+                        border-bottom: 1px solid rgba(248,113,113,0.2);">
+                <span style="color: #f87171; font-weight: 600;">[{{ alert.data.type }}]</span>
+                {{ alert.data.detail }}
+                <span style="color: #fb923c; font-size: 0.8rem; margin-left: 0.5rem;">
+                    {{ alert.time }}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
         <div class="grid">
 
             <!-- Smart Lock Card -->
@@ -670,6 +699,7 @@ def dashboard():
         light=light,
         alarm=alarm,
         events=event_log[:20],
+        alerts=alert_log[:10],
     )
 
 

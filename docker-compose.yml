@@ -65,6 +65,24 @@ services:
     networks:
       - smartnest
 
+  ids:
+    build: ./defense/d2_ids
+    container_name: smartnest-ids
+    environment:
+      - MQTT_BROKER=broker
+      - MQTT_PORT=8883
+      - CA_CERT=/certs/ca.crt
+      - CLIENT_CERT=/certs/ids_monitor.crt
+      - CLIENT_KEY=/certs/ids_monitor.key
+      - BASELINE_DURATION=60
+    volumes:
+      - ./defense/certs:/certs:ro
+    depends_on:
+      - broker
+    restart: unless-stopped
+    networks:
+      - smartnest
+
 volumes:
   broker-data:
   broker-log:
