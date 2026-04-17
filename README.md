@@ -29,7 +29,7 @@ docker compose up --build
 
 ## Architecture
 
-Three Docker containers run on an internal bridge network. Only ports 1883 (or 8883 on the defense branch) and 5001 are exposed to the host.
+On the `main` branch, three containers run on an internal bridge network. On `cw2-defense`, a fourth container (IDS) is added for real-time anomaly detection.
 
 ```
                           Docker network (internal)
@@ -43,11 +43,11 @@ Three Docker containers run on an internal bridge network. Only ports 1883 (or 8
   │            │                                                      │
   │            │ MQTT                                                 │
   │            ▼                                                      │
-  │   ┌─────────────────────┐                                         │
-  │   │  Web Panel (Flask)  │                                         │
-  │   │  dashboard + login  │                                         │
-  │   │  :5000              │                                         │
-  │   └─────────────────────┘                                         │
+  │   ┌─────────────────────┐    ┌──────────────────────────────┐    │
+  │   │  Web Panel (Flask)  │    │  IDS (cw2-defense only)      │    │
+  │   │  dashboard + login  │    │  Isolation Forest anomaly    │    │
+  │   │  :5000              │    │  detection + alerting        │    │
+  │   └─────────────────────┘    └──────────────────────────────┘    │
   │                                                                   │
   └───────────────────────────────────────────────────────────────────┘
                  │                          │
@@ -57,7 +57,7 @@ Three Docker containers run on an internal bridge network. Only ports 1883 (or 8
        Attacker / Wireshark            Browser / Attacker
 ```
 
-Port `:5000` inside the container is mapped to host port `:5001`. On the `cw2-defense` branch, broker port `1883` is closed and replaced by `8883` (TLS with mutual client certificates).
+Port `:5000` inside the container is mapped to host port `:5001`. On `cw2-defense`, broker port `1883` is closed and replaced by `8883` (TLS with mutual client certificates), and the IDS monitors all MQTT traffic in read-only mode.
 
 ## Quick start
 
@@ -78,11 +78,23 @@ Then open **http://localhost:5001** and log in with `admin` / `admin`. You shoul
 
 ```bash
 git checkout cw2-defense
-cd defense && ./gen_certs.sh && cd ..       # generate TLS certificates once
+
+# Generate TLS certificates (once per clone)
+cd defense && ./gen_certs.sh && cd ..
+
+# Generate D4 signing keys and sign config (once per clone)
+cd defense/d4_signing
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python gen_keys.py
+python sign_update.py ../../devices/config.json
+cd ../..
+
+# Start all four containers
 docker compose up --build
 ```
 
-Certificate private keys are not committed to the repository (see `.gitignore`), so every developer generates their own locally from the same CA configuration.
+On first login (`admin` / `admin`), you will be prompted to set up TOTP two-factor authentication. Scan the QR code with Google Authenticator or any RFC 6238 compatible app.
 
 ### Subscribing to MQTT traffic
 
@@ -139,29 +151,30 @@ The `cw2-defense` branch adds four defenses, each targeting one or more of the t
 | Defense | Module | Mitigates | Status |
 |---------|--------|-----------|--------|
 | D1 | MQTT TLS + mutual client certificates | T1, T2 | complete |
-| D2 | AI-driven intrusion detection system | residual T2, T4, DoS | in progress |
-| D3 | Web panel hardening (parameterized SQL, CSRF tokens, TOTP MFA) | T3, T4, T5 | in progress |
-| D4 | Signed update packages (Ed25519) | supply-chain | in progress |
+| D2 | AI-driven IDS (Isolation Forest + statistical thresholds) | residual T2, DoS | complete |
+| D3 | Web panel hardening (parameterized SQL, CSRF tokens, bcrypt, TOTP MFA) | T3, T4, T5 | complete |
+| D4 | Signed configuration updates (Ed25519 with graceful fallback) | supply-chain | complete |
 
-Full defense documentation and evidence are in `defense/README.md`.
+Full defense documentation, verification steps, and 15 evidence screenshots are in `defense/README.md`.
 
 ## Project structure
 
 ```
 Security_and_privacy_Group_8/
 ├── README.md                  # this file
-├── docker-compose.yml         # orchestration
+├── docker-compose.yml         # orchestration (4 services on cw2-defense)
 ├── broker/
 │   ├── mosquitto.conf         # MQTT broker config (TLS on cw2-defense)
 │   └── acl.conf               # per-identity ACL (cw2-defense only)
 ├── devices/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── simulator.py           # smart lock, light, alarm simulator
+│   ├── requirements.txt       # paho-mqtt, cryptography
+│   ├── simulator.py           # smart lock, light, alarm simulator
+│   └── config.json            # externalised device parameters (D4)
 ├── web/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── app.py                 # Flask management panel
+│   ├── requirements.txt       # flask, paho-mqtt, bcrypt, flask-wtf, pyotp, qrcode
+│   └── app.py                 # Flask management panel (D3 hardened on cw2-defense)
 ├── attacks/                   # CW1 attack scripts and evidence
 │   ├── README.md
 │   ├── mqtt_attack.sh
@@ -170,13 +183,14 @@ Security_and_privacy_Group_8/
 │   ├── screenshots/
 │   └── recordings/
 ├── defense/                   # CW2 defense code and evidence
-│   ├── README.md
+│   ├── README.md              # detailed documentation for all 4 defenses
 │   ├── gen_certs.sh           # D1 TLS certificate generation
+│   ├── verify_web_hardening.sh # D3 automated validation
 │   ├── certs/                 # generated certificates (.key gitignored)
-│   ├── d2_ids/                # D2 intrusion detection
-│   ├── d4_signing/            # D4 signed updates
+│   ├── d2_ids/                # D2 IDS (ids.py, Dockerfile, requirements.txt)
+│   ├── d4_signing/            # D4 signing tools (gen_keys.py, sign/verify scripts)
 │   ├── captures/
-│   ├── screenshots/
+│   ├── screenshots/           # 15 evidence screenshots (D1×4, D2×3, D3×6, D4×2)
 │   └── recordings/
 └── Sec_Plan.ipynb             # team planning notebook
 ```
@@ -192,5 +206,5 @@ Security_and_privacy_Group_8/
 
 ## Related links
 
-- **Presentation video:** *(to be added — see top of the report template)*
+- **Presentation video:** *(to be added)*
 - **Coursework report (PDF):** *(to be added at submission time)*
